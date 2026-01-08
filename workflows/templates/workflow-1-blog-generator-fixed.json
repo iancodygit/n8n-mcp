@@ -1,0 +1,348 @@
+{
+  "name": "Video Pipeline - Blog Post Generator (Fixed)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 5
+            }
+          ]
+        }
+      },
+      "id": "schedule_trigger",
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "operation": "getAll",
+        "databaseId": {
+          "mode": "id",
+          "value": "bdd14a97edf74955a841be2ab498c8da"
+        },
+        "returnAll": false,
+        "limit": 1,
+        "filterType": "manual",
+        "filters": {
+          "conditions": [
+            {
+              "key": "Status",
+              "condition": "equals",
+              "value": "Ready to Process"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "find_videos",
+      "name": "Find Videos to Process",
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [450, 300],
+      "credentials": {
+        "notionApi": {
+          "id": "notion_credentials",
+          "name": "Notion account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "operation": "update",
+        "pageId": "={{ $json.id }}",
+        "propertiesUi": {
+          "propertyValues": [
+            {
+              "key": "Status",
+              "selectValue": "Processing"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "update_status",
+      "name": "Update Status to Processing",
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [650, 300],
+      "credentials": {
+        "notionApi": {
+          "id": "notion_credentials",
+          "name": "Notion account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "page",
+        "operation": "get",
+        "pageId": "={{ $('Find Videos to Process').item.json.id }}",
+        "simple": false
+      },
+      "id": "extract_transcript",
+      "name": "Extract Transcript",
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [850, 300],
+      "credentials": {
+        "notionApi": {
+          "id": "notion_credentials",
+          "name": "Notion account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javascript",
+        "jsCode": "// Extract the transcript text from the Notion page content\nconst pageData = $('Extract Transcript').item.json;\nconst videoData = $('Find Videos to Process').item.json;\n\n// Extract transcript from page blocks\nlet transcript = '';\n\n// Check if we have results array with blocks\nif (pageData.results && Array.isArray(pageData.results)) {\n  for (const block of pageData.results) {\n    // Extract text from paragraph blocks\n    if (block.type === 'paragraph' && block.paragraph?.rich_text) {\n      for (const text of block.paragraph.rich_text) {\n        transcript += text.plain_text || '';\n      }\n      transcript += '\\n';\n    }\n    // Extract text from other block types\n    else if (block.type === 'heading_1' && block.heading_1?.rich_text) {\n      for (const text of block.heading_1.rich_text) {\n        transcript += text.plain_text || '';\n      }\n      transcript += '\\n\\n';\n    }\n    else if (block.type === 'heading_2' && block.heading_2?.rich_text) {\n      for (const text of block.heading_2.rich_text) {\n        transcript += text.plain_text || '';\n      }\n      transcript += '\\n\\n';\n    }\n    else if (block.type === 'heading_3' && block.heading_3?.rich_text) {\n      for (const text of block.heading_3.rich_text) {\n        transcript += text.plain_text || '';\n      }\n      transcript += '\\n\\n';\n    }\n    else if (block.type === 'quote' && block.quote?.rich_text) {\n      transcript += '> ';\n      for (const text of block.quote.rich_text) {\n        transcript += text.plain_text || '';\n      }\n      transcript += '\\n\\n';\n    }\n    else if (block.type === 'bulleted_list_item' && block.bulleted_list_item?.rich_text) {\n      transcript += '- ';\n      for (const text of block.bulleted_list_item.rich_text) {\n        transcript += text.plain_text || '';\n      }\n      transcript += '\\n';\n    }\n    else if (block.type === 'numbered_list_item' && block.numbered_list_item?.rich_text) {\n      transcript += '• ';\n      for (const text of block.numbered_list_item.rich_text) {\n        transcript += text.plain_text || '';\n      }\n      transcript += '\\n';\n    }\n  }\n}\n\n// Get video title\nconst videoTitle = videoData.properties?.Title?.title?.[0]?.text?.content || \n                  videoData.properties?.Name?.title?.[0]?.text?.content || \n                  'Untitled Video';\n\n// Clean up transcript\ntranscript = transcript.trim();\n\n// If no transcript found, use a fallback message\nif (!transcript) {\n  transcript = 'No transcript content found in the Notion page.';\n}\n\nreturn [\n  {\n    json: {\n      transcript,\n      videoTitle,\n      videoId: videoData.id\n    }\n  }\n];"
+      },
+      "id": "process_transcript",
+      "name": "Process Transcript",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1050, 300]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.transcript }}"
+      },
+      "id": "llm_chain",
+      "name": "Basic LLM Chain",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.4,
+      "position": [1250, 300]
+    },
+    {
+      "parameters": {
+        "projectId": "{{ $credentials.projectId }}",
+        "modelName": "gemini-1.5-flash-latest",
+        "options": {
+          "temperature": 0.7,
+          "maxOutputTokens": 2000,
+          "topP": 0.95,
+          "topK": 40
+        }
+      },
+      "id": "gemini_model",
+      "name": "Google Vertex Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleVertex",
+      "typeVersion": 1,
+      "position": [1250, 450],
+      "credentials": {
+        "googleVertexAuth": {
+          "id": "google_vertex_credentials",
+          "name": "Google Vertex AI"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "messages": {
+          "messageValues": [
+            {
+              "type": "SystemMessagePromptTemplate",
+              "message": "You are a professional blog writer creating SEO-optimized content.\n\nBRAND VOICE: Professional, educational, actionable. Focus on practical insights and real-world applications.\n\nCONTENT FORMAT:\n- Compelling SEO title (60-70 characters)\n- Engaging introduction with hook (150-200 words)\n- 3-4 main sections with H2 subheadings\n- Include relevant quotes from the transcript\n- Practical examples and actionable takeaways\n- Strong conclusion with clear call-to-action\n- Target length: 1200-1500 words\n\nOUTPUT INSTRUCTIONS: Return ONLY the complete blog post content. No additional explanations or formatting notes."
+            },
+            {
+              "type": "HumanMessagePromptTemplate",
+              "message": "Create a blog post from this transcript:\n\nVideo Title: {{ $('Process Transcript').item.json.videoTitle }}\n\nTranscript:\n{{ text }}"
+            }
+          ]
+        }
+      },
+      "id": "prompt_template",
+      "name": "Chat Prompt Template",
+      "type": "@n8n/n8n-nodes-langchain.chatMessagePromptTemplate",
+      "typeVersion": 1.1,
+      "position": [1250, 600]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Get the blog post content from LLM Chain\nconst aiOutput = $('Basic LLM Chain').item.json;\nconst processData = $('Process Transcript').item.json;\n\nlet blogContent = '';\nlet errorOccurred = false;\nlet errorMessage = '';\n\n// Extract content from LLM response\nif (aiOutput.error) {\n  errorOccurred = true;\n  errorMessage = `Blog generation failed: ${aiOutput.error.message || aiOutput.error}`;\n  blogContent = 'Error generating blog content';\n} else if (aiOutput.response) {\n  blogContent = aiOutput.response;\n} else if (aiOutput.text) {\n  blogContent = aiOutput.text;\n} else if (typeof aiOutput === 'string') {\n  blogContent = aiOutput;\n} else {\n  blogContent = JSON.stringify(aiOutput);\n}\n\n// Calculate word count\nconst wordCount = blogContent.trim().split(/\\s+/).filter(word => word.length > 0).length;\n\n// Extract title from the content\nconst lines = blogContent.split('\\n').filter(line => line.trim());\nconst title = lines[0] || 'Blog Post';\n\n// Extract SEO keywords\nconst words = blogContent.toLowerCase().match(/\\b[a-z]{4,}\\b/g) || [];\nconst stopWords = ['that', 'this', 'with', 'from', 'have', 'will', 'your', 'what', 'when', 'where', 'which', 'their', 'there', 'these', 'those', 'been', 'being', 'about', 'after', 'before', 'could', 'should', 'would'];\nconst wordFreq = {};\n\nwords.forEach(word => {\n  if (!stopWords.includes(word)) {\n    wordFreq[word] = (wordFreq[word] || 0) + 1;\n  }\n});\n\nconst seoKeywords = Object.entries(wordFreq)\n  .sort((a, b) => b[1] - a[1])\n  .slice(0, 5)\n  .map(([word]) => word)\n  .join(', ');\n\nreturn [\n  {\n    json: {\n      blogContent,\n      wordCount,\n      title,\n      videoTitle: processData.videoTitle,\n      videoId: processData.videoId,\n      seoKeywords: seoKeywords || 'content, video, insights',\n      targetAudience: 'General',\n      errorOccurred,\n      errorMessage,\n      transcript: processData.transcript\n    }\n  }\n];"
+      },
+      "id": "calculate_word_count",
+      "name": "Calculate Word Count",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1450, 300]
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "operation": "create",
+        "databaseId": {
+          "mode": "id",
+          "value": "f30872f72ecf47f38bdd4ad17a1a813e"
+        },
+        "propertiesUi": {
+          "propertyValues": [
+            {
+              "key": "Title",
+              "title": "Blog: {{ $json.videoTitle }}"
+            },
+            {
+              "key": "Content Type",
+              "selectValue": "Blog Post"
+            },
+            {
+              "key": "Status",
+              "selectValue": "Draft"
+            },
+            {
+              "key": "Word Count",
+              "numberValue": "={{ $json.wordCount }}"
+            },
+            {
+              "key": "Target Audience",
+              "selectValue": "={{ $json.targetAudience }}"
+            },
+            {
+              "key": "SEO Keywords",
+              "textValue": "={{ $json.seoKeywords }}"
+            }
+          ]
+        },
+        "blockUi": {
+          "blockValues": [
+            {
+              "type": "paragraph",
+              "richText": true,
+              "text": "={{ $json.blogContent }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "create_blog_page",
+      "name": "Create Blog Page in Content Hub",
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [1650, 300],
+      "credentials": {
+        "notionApi": {
+          "id": "notion_credentials",
+          "name": "Notion account"
+        }
+      },
+      "continueOnFail": true
+    }
+  ],
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Find Videos to Process",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find Videos to Process": {
+      "main": [
+        [
+          {
+            "node": "Update Status to Processing",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Status to Processing": {
+      "main": [
+        [
+          {
+            "node": "Extract Transcript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Transcript": {
+      "main": [
+        [
+          {
+            "node": "Process Transcript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Transcript": {
+      "main": [
+        [
+          {
+            "node": "Basic LLM Chain",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Vertex Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Basic LLM Chain",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Chat Prompt Template": {
+      "ai_prompt": [
+        [
+          {
+            "node": "Basic LLM Chain",
+            "type": "ai_prompt",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Basic LLM Chain": {
+      "main": [
+        [
+          {
+            "node": "Calculate Word Count",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Calculate Word Count": {
+      "main": [
+        [
+          {
+            "node": "Create Blog Page in Content Hub",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataSuccessExecution": "all",
+    "saveDataErrorExecution": "all",
+    "saveExecutionProgress": true,
+    "saveManualExecutions": true
+  }
+}

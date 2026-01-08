@@ -1,0 +1,333 @@
+{
+  "name": "Transcript Pipeline - Blog Post Generator (Gemini AI)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 5
+            }
+          ]
+        }
+      },
+      "id": "schedule_trigger",
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "operation": "getAll",
+        "databaseId": {
+          "mode": "id",
+          "value": "bdd14a97edf74955a841be2ab498c8da"
+        },
+        "returnAll": false,
+        "limit": 1,
+        "filterType": "manual",
+        "filters": {
+          "conditions": [
+            {
+              "key": "Status",
+              "condition": "equals",
+              "value": "Ready to Process"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "find_transcripts",
+      "name": "Find Transcripts to Process",
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [450, 300],
+      "credentials": {
+        "notionApi": {
+          "id": "notion_credentials",
+          "name": "Notion account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.id }}",
+              "operation": "isNotEmpty"
+            }
+          ]
+        }
+      },
+      "id": "check_if_transcripts_found",
+      "name": "Check if Transcripts Found",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [650, 300]
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "operation": "update",
+        "pageId": "={{ $json.id }}",
+        "propertiesUi": {
+          "propertyValues": [
+            {
+              "key": "Status",
+              "selectValue": "Processing"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "update_status",
+      "name": "Update Status to Processing",
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [850, 300],
+      "credentials": {
+        "notionApi": {
+          "id": "notion_credentials",
+          "name": "Notion account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "block",
+        "operation": "getAll",
+        "blockId": {
+          "mode": "id",
+          "value": "={{ $('Find Transcripts to Process').item.json.id }}"
+        },
+        "returnAll": true,
+        "options": {}
+      },
+      "id": "get_page_content",
+      "name": "Get Page Content",
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [1050, 300],
+      "credentials": {
+        "notionApi": {
+          "id": "notion_credentials",
+          "name": "Notion account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javascript",
+        "jsCode": "// Extract all text content from Notion blocks\nconst blocks = $input.all();\nlet transcript = '';\nlet title = 'Untitled Transcript';\nlet firstHeadingFound = false;\n\n// Process each block\nfor (const item of blocks) {\n  const block = item.json;\n  \n  // Extract text based on block type\n  if (block.type === 'paragraph' && block.paragraph?.rich_text) {\n    for (const text of block.paragraph.rich_text) {\n      transcript += text.plain_text || '';\n    }\n    transcript += '\\n';\n  }\n  else if (block.type === 'heading_1' && block.heading_1?.rich_text) {\n    let headingText = '';\n    for (const text of block.heading_1.rich_text) {\n      headingText += text.plain_text || '';\n    }\n    if (!firstHeadingFound && headingText) {\n      title = headingText;\n      firstHeadingFound = true;\n    }\n    transcript += headingText + '\\n\\n';\n  }\n  else if (block.type === 'heading_2' && block.heading_2?.rich_text) {\n    for (const text of block.heading_2.rich_text) {\n      transcript += text.plain_text || '';\n    }\n    transcript += '\\n\\n';\n  }\n  else if (block.type === 'heading_3' && block.heading_3?.rich_text) {\n    for (const text of block.heading_3.rich_text) {\n      transcript += text.plain_text || '';\n    }\n    transcript += '\\n\\n';\n  }\n  else if (block.type === 'quote' && block.quote?.rich_text) {\n    transcript += '> ';\n    for (const text of block.quote.rich_text) {\n      transcript += text.plain_text || '';\n    }\n    transcript += '\\n\\n';\n  }\n  else if (block.type === 'bulleted_list_item' && block.bulleted_list_item?.rich_text) {\n    transcript += '- ';\n    for (const text of block.bulleted_list_item.rich_text) {\n      transcript += text.plain_text || '';\n    }\n    transcript += '\\n';\n  }\n  else if (block.type === 'numbered_list_item' && block.numbered_list_item?.rich_text) {\n    transcript += '• ';\n    for (const text of block.numbered_list_item.rich_text) {\n      transcript += text.plain_text || '';\n    }\n    transcript += '\\n';\n  }\n  else if (block.type === 'code' && block.code?.rich_text) {\n    transcript += '```\\n';\n    for (const text of block.code.rich_text) {\n      transcript += text.plain_text || '';\n    }\n    transcript += '\\n```\\n\\n';\n  }\n  else if (block.type === 'toggle' && block.toggle?.rich_text) {\n    for (const text of block.toggle.rich_text) {\n      transcript += text.plain_text || '';\n    }\n    transcript += '\\n';\n  }\n  else if (block.type === 'callout' && block.callout?.rich_text) {\n    for (const text of block.callout.rich_text) {\n      transcript += text.plain_text || '';\n    }\n    transcript += '\\n\\n';\n  }\n}\n\n// Clean up transcript\ntranscript = transcript.trim();\n\n// Calculate word count\nconst wordCount = transcript.split(/\\s+/).filter(word => word.length > 0).length;\n\n// Get page title from the original Notion page if available\nconst pageData = $('Find Transcripts to Process').item.json;\nif (pageData.properties?.Title?.title?.[0]?.text?.content) {\n  title = pageData.properties.Title.title[0].text.content;\n} else if (pageData.properties?.Name?.title?.[0]?.text?.content) {\n  title = pageData.properties.Name.title[0].text.content;\n}\n\nreturn [\n  {\n    json: {\n      transcript: transcript || 'No transcript content found',\n      title: title,\n      wordCount: wordCount,\n      pageId: pageData.id\n    }\n  }\n];"
+      },
+      "id": "extract_text_from_blocks",
+      "name": "Extract Text from Blocks",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1250, 300]
+    },
+    {
+      "parameters": {
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googlePalmApi",
+        "method": "POST",
+        "url": "=https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={{$credentials.apiKey}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"contents\": [{\n    \"parts\": [{\n      \"text\": \"You are a professional blog writer creating SEO-optimized content from video transcripts.\\n\\nBRAND VOICE: Professional, educational, actionable. Focus on practical insights and real-world applications.\\n\\nCONTENT FORMAT:\\n- Compelling SEO title (60-70 characters)\\n- Engaging introduction with hook (150-200 words)\\n- 3-4 main sections with H2 subheadings\\n- Include relevant quotes from the transcript when available\\n- Practical examples and actionable takeaways\\n- Strong conclusion with clear call-to-action\\n- Target length: 1200-1500 words\\n\\nOUTPUT INSTRUCTIONS: Return ONLY the complete blog post content in markdown format. No additional explanations or formatting notes.\\n\\nCreate a comprehensive blog post from this transcript:\\n\\nTitle: {{ $json.title }}\\n\\nTranscript:\\n{{ $json.transcript }}\"\n    }]\n  }],\n  \"generationConfig\": {\n    \"temperature\": 0.7,\n    \"maxOutputTokens\": 2000,\n    \"topP\": 0.95,\n    \"topK\": 40\n  }\n}",
+        "options": {}
+      },
+      "id": "ai_blog_generator",
+      "name": "AI Blog Post Generator",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1450, 300],
+      "credentials": {
+        "googlePalmApi": {
+          "id": "google_palm_credentials",
+          "name": "Google Gemini API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javascript",
+        "jsCode": "// Process the AI response\nconst aiResponse = $('AI Blog Post Generator').item.json;\nconst extractData = $('Extract Text from Blocks').item.json;\n\nlet blogContent = '';\nlet errorOccurred = false;\nlet errorMessage = '';\n\n// Extract content from Gemini response\nif (aiResponse.candidates && aiResponse.candidates[0]?.content?.parts?.[0]?.text) {\n  blogContent = aiResponse.candidates[0].content.parts[0].text;\n} else if (aiResponse.error) {\n  errorOccurred = true;\n  errorMessage = `Blog generation failed: ${aiResponse.error.message || JSON.stringify(aiResponse.error)}`;\n  blogContent = 'Error generating blog content';\n} else {\n  blogContent = 'Unable to extract blog content from AI response';\n  errorOccurred = true;\n  errorMessage = 'Unexpected AI response format';\n}\n\n// Calculate word count of generated blog\nconst blogWordCount = blogContent.split(/\\s+/).filter(word => word.length > 0).length;\n\nreturn [\n  {\n    json: {\n      blogContent: blogContent,\n      title: extractData.title,\n      originalWordCount: extractData.wordCount,\n      blogWordCount: blogWordCount,\n      pageId: extractData.pageId,\n      errorOccurred: errorOccurred,\n      errorMessage: errorMessage\n    }\n  }\n];"
+      },
+      "id": "process_blog_content",
+      "name": "Process Blog Content",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1650, 300]
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "operation": "create",
+        "databaseId": {
+          "mode": "id",
+          "value": "f30872f72ecf47f38bdd4ad17a1a813e"
+        },
+        "propertiesUi": {
+          "propertyValues": [
+            {
+              "key": "Title",
+              "title": "Blog: {{ $json.title }}"
+            },
+            {
+              "key": "Content Type",
+              "selectValue": "Blog Post"
+            },
+            {
+              "key": "Status",
+              "selectValue": "Draft"
+            },
+            {
+              "key": "Word Count",
+              "numberValue": "={{ $json.blogWordCount }}"
+            },
+            {
+              "key": "Source",
+              "textValue": "={{ $json.pageId }}"
+            }
+          ]
+        },
+        "blockUi": {
+          "blockValues": [
+            {
+              "type": "paragraph",
+              "richText": true,
+              "text": "={{ $json.blogContent }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "create_blog_hub",
+      "name": "Create Blog in Content Hub",
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [1850, 300],
+      "credentials": {
+        "notionApi": {
+          "id": "notion_credentials",
+          "name": "Notion account"
+        }
+      },
+      "continueOnFail": true
+    }
+  ],
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Find Transcripts to Process",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find Transcripts to Process": {
+      "main": [
+        [
+          {
+            "node": "Check if Transcripts Found",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check if Transcripts Found": {
+      "main": [
+        [
+          {
+            "node": "Update Status to Processing",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Update Status to Processing": {
+      "main": [
+        [
+          {
+            "node": "Get Page Content",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Page Content": {
+      "main": [
+        [
+          {
+            "node": "Extract Text from Blocks",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Text from Blocks": {
+      "main": [
+        [
+          {
+            "node": "AI Blog Post Generator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Blog Post Generator": {
+      "main": [
+        [
+          {
+            "node": "Process Blog Content",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Blog Content": {
+      "main": [
+        [
+          {
+            "node": "Create Blog in Content Hub",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataSuccessExecution": "all",
+    "saveDataErrorExecution": "all",
+    "saveExecutionProgress": true,
+    "saveManualExecutions": true
+  }
+}

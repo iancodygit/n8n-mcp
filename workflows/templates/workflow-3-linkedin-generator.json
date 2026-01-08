@@ -1,0 +1,190 @@
+{
+  "name": "Video Pipeline - LinkedIn Post Generator",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "linkedin-generator",
+        "httpMethod": "POST",
+        "responseMode": "lastNode",
+        "responseData": "allEntries"
+      },
+      "id": "b4c5d6e7-f8a9-0123-bcde-456789012345",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [250, 300],
+      "webhookId": "linkedin-webhook"
+    },
+    {
+      "parameters": {
+        "projectId": "{{ $credentials.projectId }}",
+        "modelName": "gemini-1.5-flash-latest",
+        "temperature": 0.7,
+        "maxOutputTokens": 500,
+        "topP": 0.95,
+        "topK": 40,
+        "prompt": "You are a LinkedIn content strategist creating professional, engaging posts.\n\nBRAND VOICE: Professional yet approachable, thought-provoking, industry-focused.\n\nCONTENT FORMAT:\n- Hook opening line\n- 2-3 key insights from the video\n- Include relevant quote from transcript\n- Personal reflection or industry context\n- 3-5 relevant hashtags\n- Call for engagement (question/discussion)\n- Target length: 150-300 words\n\nOUTPUT INSTRUCTIONS: Return the post content with hashtags included at the end.\n\nCreate a LinkedIn post from this video:\n\nTitle: {{ $json.videoTitle }}\n\nTranscript:\n{{ $json.transcript }}"
+      },
+      "id": "c5d6e7f8-a9b0-1234-cdef-567890123456",
+      "name": "AI LinkedIn Post Generator",
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleVertex",
+      "typeVersion": 1,
+      "position": [450, 300],
+      "credentials": {
+        "googleVertexAuth": {
+          "id": "google_vertex_credentials",
+          "name": "Google Vertex AI"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javascript",
+        "jsCode": "// Get LinkedIn content and check for errors\nconst aiNode = $('AI LinkedIn Post Generator').item;\nlet linkedinContent = '';\nlet errorOccurred = false;\nlet errorMessage = $('Webhook Trigger').item.json.previousErrors || '';\n\nif (aiNode.error) {\n  errorOccurred = true;\n  errorMessage += `; LinkedIn generation failed: ${aiNode.error.message}`;\n  linkedinContent = 'Error generating LinkedIn content';\n} else {\n  linkedinContent = aiNode.json.text || aiNode.json.response || '';\n}\n\n// Calculate word count\nconst wordCount = linkedinContent.trim().split(/\\s+/).filter(word => word.length > 0).length;\n\n// Extract hashtags (look for words starting with #)\nconst hashtagMatches = linkedinContent.match(/#\\w+/g) || [];\nconst hashtags = hashtagMatches.join(' ');\n\n// Remove hashtags from main content for cleaner storage\nconst cleanContent = linkedinContent.replace(/#\\w+\\s*/g, '').trim();\n\n// Get webhook data\nconst webhookData = $('Webhook Trigger').item.json;\n\nreturn [\n  {\n    json: {\n      linkedinContent: cleanContent,\n      hashtags: hashtags || '#contentcreation #videocontent #insights',\n      wordCount,\n      videoTitle: webhookData.videoTitle,\n      videoId: webhookData.videoId,\n      transcript: webhookData.transcript,\n      targetAudience: 'Professional Network',\n      errorOccurred,\n      errorMessage\n    }\n  }\n];"
+      },
+      "id": "d6e7f8a9-b0c1-2345-defa-678901234567",
+      "name": "Process LinkedIn Post",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [650, 300]
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "operation": "create",
+        "databaseId": {
+          "mode": "id",
+          "value": "f30872f72ecf47f38bdd4ad17a1a813e"
+        },
+        "propertiesUi": {
+          "propertyValues": [
+            {
+              "key": "Title",
+              "title": "LinkedIn: {{ $json.videoTitle }}"
+            },
+            {
+              "key": "Content Type",
+              "selectValue": "LinkedIn Post"
+            },
+            {
+              "key": "Status",
+              "selectValue": "Draft"
+            },
+            {
+              "key": "Word Count",
+              "numberValue": "={{ $json.wordCount }}"
+            },
+            {
+              "key": "Hashtags",
+              "textValue": "={{ $json.hashtags }}"
+            },
+            {
+              "key": "Target Audience",
+              "selectValue": "={{ $json.targetAudience }}"
+            }
+          ]
+        },
+        "blockUi": {
+          "blockValues": [
+            {
+              "type": "paragraph",
+              "richText": true,
+              "text": "={{ $json.linkedinContent }}"
+            },
+            {
+              "type": "paragraph",
+              "richText": true,
+              "text": "\n\n{{ $json.hashtags }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "e7f8a9b0-c1d2-3456-efab-789012345678",
+      "name": "Create LinkedIn Page",
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [850, 300],
+      "credentials": {
+        "notionApi": {
+          "id": "notion_credentials",
+          "name": "Notion account"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://localhost:5678/webhook/instagram-generator",
+        "authentication": "none",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"videoId\": \"{{ $('Process LinkedIn Post').item.json.videoId }}\",\n  \"videoTitle\": \"{{ $('Process LinkedIn Post').item.json.videoTitle }}\",\n  \"transcript\": \"{{ $('Process LinkedIn Post').item.json.transcript }}\",\n  \"previousErrors\": \"{{ $json.errorMessage }}\"\n}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "f8a9b0c1-d2e3-4567-fabc-890123456789",
+      "name": "Trigger Instagram Workflow",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1050, 300],
+      "continueOnFail": true
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "AI LinkedIn Post Generator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI LinkedIn Post Generator": {
+      "main": [
+        [
+          {
+            "node": "Process LinkedIn Post",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process LinkedIn Post": {
+      "main": [
+        [
+          {
+            "node": "Create LinkedIn Page",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create LinkedIn Page": {
+      "main": [
+        [
+          {
+            "node": "Trigger Instagram Workflow",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataSuccessExecution": "all",
+    "saveDataErrorExecution": "all",
+    "saveExecutionProgress": true
+  }
+}

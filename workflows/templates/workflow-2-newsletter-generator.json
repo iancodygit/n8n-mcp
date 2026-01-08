@@ -1,0 +1,181 @@
+{
+  "name": "Video Pipeline - Newsletter Generator",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "newsletter-generator",
+        "httpMethod": "POST",
+        "responseMode": "lastNode",
+        "responseData": "allEntries"
+      },
+      "id": "c9d0e1f2-a3b4-5678-cdef-901234567890",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [250, 300],
+      "webhookId": "newsletter-webhook"
+    },
+    {
+      "parameters": {
+        "projectId": "{{ $credentials.projectId }}",
+        "modelName": "gemini-1.5-flash-latest",
+        "temperature": 0.7,
+        "maxOutputTokens": 1000,
+        "topP": 0.95,
+        "topK": 40,
+        "prompt": "You are an expert email newsletter writer creating engaging content for subscribers.\n\nBRAND VOICE: Conversational, valuable, actionable. Focus on insider insights and practical tips.\n\nCONTENT FORMAT:\n- Catchy subject line (40-50 characters)\n- Personal greeting and brief intro\n- 2-3 key takeaways from the video\n- Include 1-2 direct quotes from transcript\n- Actionable tip or insight\n- Clear call-to-action\n- Target length: 400-600 words\n\nOUTPUT INSTRUCTIONS: Return ONLY the complete newsletter content. No additional explanations.\n\nCreate a newsletter from this video transcript:\n\nVideo Title: {{ $json.videoTitle }}\n\nTranscript:\n{{ $json.transcript }}"
+      },
+      "id": "d0e1f2a3-b4c5-6789-defa-012345678901",
+      "name": "AI Newsletter Generator",
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleVertex",
+      "typeVersion": 1,
+      "position": [450, 300],
+      "credentials": {
+        "googleVertexAuth": {
+          "id": "google_vertex_credentials",
+          "name": "Google Vertex AI"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javascript",
+        "jsCode": "// Get newsletter content and check for errors\nconst aiNode = $('AI Newsletter Generator').item;\nlet newsletterContent = '';\nlet errorOccurred = false;\nlet errorMessage = $('Webhook Trigger').item.json.previousErrors || '';\n\nif (aiNode.error) {\n  errorOccurred = true;\n  errorMessage += `; Newsletter generation failed: ${aiNode.error.message}`;\n  newsletterContent = 'Error generating newsletter content';\n} else {\n  newsletterContent = aiNode.json.text || aiNode.json.response || '';\n}\n\n// Calculate word count\nconst wordCount = newsletterContent.trim().split(/\\s+/).filter(word => word.length > 0).length;\n\n// Extract subject line (assuming it's the first line)\nconst lines = newsletterContent.split('\\n').filter(line => line.trim());\nconst subjectLine = lines[0] || 'Newsletter';\n\n// Get webhook data\nconst webhookData = $('Webhook Trigger').item.json;\n\nreturn [\n  {\n    json: {\n      newsletterContent,\n      wordCount,\n      subjectLine,\n      videoTitle: webhookData.videoTitle,\n      videoId: webhookData.videoId,\n      transcript: webhookData.transcript,\n      targetAudience: 'Subscribers',\n      errorOccurred,\n      errorMessage\n    }\n  }\n];"
+      },
+      "id": "e1f2a3b4-c5d6-7890-efab-123456789012",
+      "name": "Process Newsletter Content",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [650, 300]
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "operation": "create",
+        "databaseId": {
+          "mode": "id",
+          "value": "f30872f72ecf47f38bdd4ad17a1a813e"
+        },
+        "propertiesUi": {
+          "propertyValues": [
+            {
+              "key": "Title",
+              "title": "Newsletter: {{ $json.videoTitle }}"
+            },
+            {
+              "key": "Content Type",
+              "selectValue": "Newsletter"
+            },
+            {
+              "key": "Status",
+              "selectValue": "Draft"
+            },
+            {
+              "key": "Word Count",
+              "numberValue": "={{ $json.wordCount }}"
+            },
+            {
+              "key": "Target Audience",
+              "selectValue": "={{ $json.targetAudience }}"
+            }
+          ]
+        },
+        "blockUi": {
+          "blockValues": [
+            {
+              "type": "paragraph",
+              "richText": true,
+              "text": "={{ $json.newsletterContent }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "f2a3b4c5-d6e7-8901-fabc-234567890123",
+      "name": "Create Newsletter Page",
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [850, 300],
+      "credentials": {
+        "notionApi": {
+          "id": "notion_credentials",
+          "name": "Notion account"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://localhost:5678/webhook/linkedin-generator",
+        "authentication": "none",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"videoId\": \"{{ $('Process Newsletter Content').item.json.videoId }}\",\n  \"videoTitle\": \"{{ $('Process Newsletter Content').item.json.videoTitle }}\",\n  \"transcript\": \"{{ $('Process Newsletter Content').item.json.transcript }}\",\n  \"previousErrors\": \"{{ $json.errorMessage }}\"\n}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "a3b4c5d6-e7f8-9012-abcd-345678901234",
+      "name": "Trigger LinkedIn Workflow",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1050, 300],
+      "continueOnFail": true
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "AI Newsletter Generator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Newsletter Generator": {
+      "main": [
+        [
+          {
+            "node": "Process Newsletter Content",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Newsletter Content": {
+      "main": [
+        [
+          {
+            "node": "Create Newsletter Page",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Newsletter Page": {
+      "main": [
+        [
+          {
+            "node": "Trigger LinkedIn Workflow",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataSuccessExecution": "all",
+    "saveDataErrorExecution": "all",
+    "saveExecutionProgress": true
+  }
+}

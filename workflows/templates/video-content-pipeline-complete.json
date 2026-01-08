@@ -1,0 +1,973 @@
+{
+  "workflows": [
+    {
+      "workflowInfo": {
+        "name": "1. Video Pipeline - Blog Post Generator",
+        "description": "Main workflow that triggers every 5 minutes to process videos and generate blog posts"
+      },
+      "name": "Video Pipeline - Blog Post Generator",
+      "nodes": [
+        {
+          "parameters": {
+            "rule": {
+              "interval": [
+                {
+                  "field": "minutes",
+                  "minutesInterval": 5
+                }
+              ]
+            }
+          },
+          "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+          "name": "Schedule Trigger",
+          "type": "n8n-nodes-base.scheduleTrigger",
+          "typeVersion": 1.2,
+          "position": [250, 300]
+        },
+        {
+          "parameters": {
+            "resource": "databasePage",
+            "operation": "getAll",
+            "databaseId": {
+              "mode": "id",
+              "value": "bdd14a97edf74955a841be2ab498c8da"
+            },
+            "returnAll": false,
+            "limit": 1,
+            "filterType": "manual",
+            "filters": {
+              "conditions": [
+                {
+                  "key": "Status",
+                  "condition": "equals",
+                  "value": "Ready to Process"
+                }
+              ]
+            },
+            "options": {}
+          },
+          "id": "b2c3d4e5-f6a7-8901-bcde-f23456789012",
+          "name": "Find Videos to Process",
+          "type": "n8n-nodes-base.notion",
+          "typeVersion": 2.2,
+          "position": [450, 300],
+          "credentials": {
+            "notionApi": {
+              "id": "notion_credentials",
+              "name": "Notion account"
+            }
+          }
+        },
+        {
+          "parameters": {
+            "resource": "databasePage",
+            "operation": "update",
+            "pageId": "={{ $json.id }}",
+            "propertiesUi": {
+              "propertyValues": [
+                {
+                  "key": "Status",
+                  "selectValue": "Processing"
+                }
+              ]
+            },
+            "options": {}
+          },
+          "id": "c3d4e5f6-a7b8-9012-cdef-345678901234",
+          "name": "Update Status to Processing",
+          "type": "n8n-nodes-base.notion",
+          "typeVersion": 2.2,
+          "position": [650, 300],
+          "credentials": {
+            "notionApi": {
+              "id": "notion_credentials",
+              "name": "Notion account"
+            }
+          }
+        },
+        {
+          "parameters": {
+            "resource": "page",
+            "operation": "get",
+            "pageId": "={{ $('Find Videos to Process').item.json.id }}",
+            "simple": false,
+            "options": {
+              "returnAsText": true
+            }
+          },
+          "id": "d4e5f6a7-b8c9-0123-defa-456789012345",
+          "name": "Extract Transcript",
+          "type": "n8n-nodes-base.notion",
+          "typeVersion": 2.2,
+          "position": [850, 300],
+          "credentials": {
+            "notionApi": {
+              "id": "notion_credentials",
+              "name": "Notion account"
+            }
+          }
+        },
+        {
+          "parameters": {
+            "projectId": "{{ $credentials.projectId }}",
+            "modelName": "gemini-1.5-flash-latest",
+            "temperature": 0.7,
+            "maxOutputTokens": 2000,
+            "topP": 0.95,
+            "topK": 40,
+            "prompt": "You are a professional blog writer creating SEO-optimized content.\n\nBRAND VOICE: Professional, educational, actionable. Focus on practical insights and real-world applications.\n\nCONTENT FORMAT:\n- Compelling SEO title (60-70 characters)\n- Engaging introduction with hook (150-200 words)\n- 3-4 main sections with H2 subheadings\n- Include relevant quotes from the transcript\n- Practical examples and actionable takeaways\n- Strong conclusion with clear call-to-action\n- Target length: 1200-1500 words\n\nOUTPUT INSTRUCTIONS: Return ONLY the complete blog post content. No additional explanations or formatting notes.\n\nCreate a blog post from this transcript:\n\n{{ $('Extract Transcript').item.json.text }}"
+          },
+          "id": "e5f6a7b8-c9d0-1234-efab-567890123456",
+          "name": "AI Blog Post Generator",
+          "type": "@n8n/n8n-nodes-langchain.lmChatGoogleVertex",
+          "typeVersion": 1,
+          "position": [1050, 300],
+          "credentials": {
+            "googleVertexAuth": {
+              "id": "google_vertex_credentials",
+              "name": "Google Vertex AI"
+            }
+          },
+          "continueOnFail": true
+        },
+        {
+          "parameters": {
+            "mode": "runOnceForAllItems",
+            "language": "javascript",
+            "jsCode": "// Get the blog post content and check for errors\nconst aiNode = $('AI Blog Post Generator').item;\nlet blogContent = '';\nlet errorOccurred = false;\nlet errorMessage = '';\n\nif (aiNode.error) {\n  errorOccurred = true;\n  errorMessage = `Blog generation failed: ${aiNode.error.message}`;\n  blogContent = 'Error generating blog content';\n} else {\n  blogContent = aiNode.json.text || aiNode.json.response || '';\n}\n\n// Calculate word count\nconst wordCount = blogContent.trim().split(/\\s+/).filter(word => word.length > 0).length;\n\n// Extract title from the content (assuming it's the first line)\nconst lines = blogContent.split('\\n').filter(line => line.trim());\nconst title = lines[0] || 'Blog Post';\n\n// Get original video data\nconst videoData = $('Find Videos to Process').item.json;\nconst videoTitle = videoData.properties?.Title?.title?.[0]?.text?.content || videoData.properties?.Name?.title?.[0]?.text?.content || 'Untitled Video';\n\n// Extract SEO keywords from content (simple approach - most common words)\nconst words = blogContent.toLowerCase().match(/\\b[a-z]{4,}\\b/g) || [];\nconst stopWords = ['that', 'this', 'with', 'from', 'have', 'will', 'your', 'what', 'when', 'where', 'which', 'their', 'there', 'these', 'those', 'been', 'being', 'about', 'after', 'before', 'could', 'should', 'would'];\nconst wordFreq = {};\n\nwords.forEach(word => {\n  if (!stopWords.includes(word)) {\n    wordFreq[word] = (wordFreq[word] || 0) + 1;\n  }\n});\n\nconst seoKeywords = Object.entries(wordFreq)\n  .sort((a, b) => b[1] - a[1])\n  .slice(0, 5)\n  .map(([word]) => word)\n  .join(', ');\n\nreturn [\n  {\n    json: {\n      blogContent,\n      wordCount,\n      title,\n      videoTitle,\n      videoId: videoData.id,\n      seoKeywords: seoKeywords || 'content, video, insights',\n      targetAudience: 'General',\n      errorOccurred,\n      errorMessage,\n      transcript: $('Extract Transcript').item.json.text\n    }\n  }\n];"
+          },
+          "id": "f6a7b8c9-d0e1-2345-fabc-678901234567",
+          "name": "Calculate Word Count",
+          "type": "n8n-nodes-base.code",
+          "typeVersion": 2,
+          "position": [1250, 300]
+        },
+        {
+          "parameters": {
+            "resource": "databasePage",
+            "operation": "create",
+            "databaseId": {
+              "mode": "id",
+              "value": "f30872f72ecf47f38bdd4ad17a1a813e"
+            },
+            "propertiesUi": {
+              "propertyValues": [
+                {
+                  "key": "Title",
+                  "title": "Blog: {{ $json.videoTitle }}"
+                },
+                {
+                  "key": "Content Type",
+                  "selectValue": "Blog Post"
+                },
+                {
+                  "key": "Status",
+                  "selectValue": "Draft"
+                },
+                {
+                  "key": "Word Count",
+                  "numberValue": "={{ $json.wordCount }}"
+                },
+                {
+                  "key": "Target Audience",
+                  "selectValue": "={{ $json.targetAudience }}"
+                },
+                {
+                  "key": "SEO Keywords",
+                  "textValue": "={{ $json.seoKeywords }}"
+                }
+              ]
+            },
+            "blockUi": {
+              "blockValues": [
+                {
+                  "type": "paragraph",
+                  "richText": true,
+                  "text": "={{ $json.blogContent }}"
+                }
+              ]
+            },
+            "options": {}
+          },
+          "id": "a7b8c9d0-e1f2-3456-abcd-789012345678",
+          "name": "Create Blog Page in Content Hub",
+          "type": "n8n-nodes-base.notion",
+          "typeVersion": 2.2,
+          "position": [1450, 300],
+          "credentials": {
+            "notionApi": {
+              "id": "notion_credentials",
+              "name": "Notion account"
+            }
+          },
+          "continueOnFail": true
+        },
+        {
+          "parameters": {
+            "method": "POST",
+            "url": "http://localhost:5678/webhook/newsletter-generator",
+            "authentication": "none",
+            "sendBody": true,
+            "specifyBody": "json",
+            "jsonBody": "{\n  \"videoId\": \"{{ $('Find Videos to Process').item.json.id }}\",\n  \"videoTitle\": \"{{ $('Calculate Word Count').item.json.videoTitle }}\",\n  \"transcript\": \"{{ $('Extract Transcript').item.json.text }}\",\n  \"previousErrors\": \"{{ $json.errorMessage }}\"\n}",
+            "options": {
+              "timeout": 60000
+            }
+          },
+          "id": "b8c9d0e1-f2a3-4567-bcde-890123456789",
+          "name": "Trigger Newsletter Workflow",
+          "type": "n8n-nodes-base.httpRequest",
+          "typeVersion": 4.2,
+          "position": [1650, 300],
+          "continueOnFail": true
+        }
+      ],
+      "connections": {
+        "Schedule Trigger": {
+          "main": [
+            [
+              {
+                "node": "Find Videos to Process",
+                "type": "main",
+                "index": 0
+              }
+            ]
+          ]
+        },
+        "Find Videos to Process": {
+          "main": [
+            [
+              {
+                "node": "Update Status to Processing",
+                "type": "main",
+                "index": 0
+              }
+            ]
+          ]
+        },
+        "Update Status to Processing": {
+          "main": [
+            [
+              {
+                "node": "Extract Transcript",
+                "type": "main",
+                "index": 0
+              }
+            ]
+          ]
+        },
+        "Extract Transcript": {
+          "main": [
+            [
+              {
+                "node": "AI Blog Post Generator",
+                "type": "main",
+                "index": 0
+              }
+            ]
+          ]
+        },
+        "AI Blog Post Generator": {
+          "main": [
+            [
+              {
+                "node": "Calculate Word Count",
+                "type": "main",
+                "index": 0
+              }
+            ]
+          ]
+        },
+        "Calculate Word Count": {
+          "main": [
+            [
+              {
+                "node": "Create Blog Page in Content Hub",
+                "type": "main",
+                "index": 0
+              }
+            ]
+          ]
+        },
+        "Create Blog Page in Content Hub": {
+          "main": [
+            [
+              {
+                "node": "Trigger Newsletter Workflow",
+                "type": "main",
+                "index": 0
+              }
+            ]
+          ]
+        }
+      },
+      "settings": {
+        "executionOrder": "v1",
+        "saveDataSuccessExecution": "all",
+        "saveDataErrorExecution": "all",
+        "saveExecutionProgress": true,
+        "saveManualExecutions": true
+      }
+    },
+    {
+      "workflowInfo": {
+        "name": "2. Video Pipeline - Newsletter Generator",
+        "description": "Webhook-triggered workflow that generates newsletter content"
+      },
+      "name": "Video Pipeline - Newsletter Generator",
+      "nodes": [
+        {
+          "parameters": {
+            "path": "newsletter-generator",
+            "httpMethod": "POST",
+            "responseMode": "lastNode",
+            "responseData": "allEntries"
+          },
+          "id": "c9d0e1f2-a3b4-5678-cdef-901234567890",
+          "name": "Webhook Trigger",
+          "type": "n8n-nodes-base.webhook",
+          "typeVersion": 1.1,
+          "position": [250, 300],
+          "webhookId": "newsletter-webhook"
+        },
+        {
+          "parameters": {
+            "projectId": "{{ $credentials.projectId }}",
+            "modelName": "gemini-1.5-flash-latest",
+            "temperature": 0.7,
+            "maxOutputTokens": 1000,
+            "topP": 0.95,
+            "topK": 40,
+            "prompt": "You are an expert email newsletter writer creating engaging content for subscribers.\n\nBRAND VOICE: Conversational, valuable, actionable. Focus on insider insights and practical tips.\n\nCONTENT FORMAT:\n- Catchy subject line (40-50 characters)\n- Personal greeting and brief intro\n- 2-3 key takeaways from the video\n- Include 1-2 direct quotes from transcript\n- Actionable tip or insight\n- Clear call-to-action\n- Target length: 400-600 words\n\nOUTPUT INSTRUCTIONS: Return ONLY the complete newsletter content. No additional explanations.\n\nCreate a newsletter from this video transcript:\n\nVideo Title: {{ $json.videoTitle }}\n\nTranscript:\n{{ $json.transcript }}"
+          },
+          "id": "d0e1f2a3-b4c5-6789-defa-012345678901",
+          "name": "AI Newsletter Generator",
+          "type": "@n8n/n8n-nodes-langchain.lmChatGoogleVertex",
+          "typeVersion": 1,
+          "position": [450, 300],
+          "credentials": {
+            "googleVertexAuth": {
+              "id": "google_vertex_credentials",
+              "name": "Google Vertex AI"
+            }
+          },
+          "continueOnFail": true
+        },
+        {
+          "parameters": {
+            "mode": "runOnceForAllItems",
+            "language": "javascript",
+            "jsCode": "// Get newsletter content and check for errors\nconst aiNode = $('AI Newsletter Generator').item;\nlet newsletterContent = '';\nlet errorOccurred = false;\nlet errorMessage = $('Webhook Trigger').item.json.previousErrors || '';\n\nif (aiNode.error) {\n  errorOccurred = true;\n  errorMessage += `; Newsletter generation failed: ${aiNode.error.message}`;\n  newsletterContent = 'Error generating newsletter content';\n} else {\n  newsletterContent = aiNode.json.text || aiNode.json.response || '';\n}\n\n// Calculate word count\nconst wordCount = newsletterContent.trim().split(/\\s+/).filter(word => word.length > 0).length;\n\n// Extract subject line (assuming it's the first line)\nconst lines = newsletterContent.split('\\n').filter(line => line.trim());\nconst subjectLine = lines[0] || 'Newsletter';\n\n// Get webhook data\nconst webhookData = $('Webhook Trigger').item.json;\n\nreturn [\n  {\n    json: {\n      newsletterContent,\n      wordCount,\n      subjectLine,\n      videoTitle: webhookData.videoTitle,\n      videoId: webhookData.videoId,\n      transcript: webhookData.transcript,\n      targetAudience: 'Subscribers',\n      errorOccurred,\n      errorMessage\n    }\n  }\n];"
+          },
+          "id": "e1f2a3b4-c5d6-7890-efab-123456789012",
+          "name": "Process Newsletter Content",
+          "type": "n8n-nodes-base.code",
+          "typeVersion": 2,
+          "position": [650, 300]
+        },
+        {
+          "parameters": {
+            "resource": "databasePage",
+            "operation": "create",
+            "databaseId": {
+              "mode": "id",
+              "value": "f30872f72ecf47f38bdd4ad17a1a813e"
+            },
+            "propertiesUi": {
+              "propertyValues": [
+                {
+                  "key": "Title",
+                  "title": "Newsletter: {{ $json.videoTitle }}"
+                },
+                {
+                  "key": "Content Type",
+                  "selectValue": "Newsletter"
+                },
+                {
+                  "key": "Status",
+                  "selectValue": "Draft"
+                },
+                {
+                  "key": "Word Count",
+                  "numberValue": "={{ $json.wordCount }}"
+                },
+                {
+                  "key": "Target Audience",
+                  "selectValue": "={{ $json.targetAudience }}"
+                }
+              ]
+            },
+            "blockUi": {
+              "blockValues": [
+                {
+                  "type": "paragraph",
+                  "richText": true,
+                  "text": "={{ $json.newsletterContent }}"
+                }
+              ]
+            },
+            "options": {}
+          },
+          "id": "f2a3b4c5-d6e7-8901-fabc-234567890123",
+          "name": "Create Newsletter Page",
+          "type": "n8n-nodes-base.notion",
+          "typeVersion": 2.2,
+          "position": [850, 300],
+          "credentials": {
+            "notionApi": {
+              "id": "notion_credentials",
+              "name": "Notion account"
+            }
+          },
+          "continueOnFail": true
+        },
+        {
+          "parameters": {
+            "method": "POST",
+            "url": "http://localhost:5678/webhook/linkedin-generator",
+            "authentication": "none",
+            "sendBody": true,
+            "specifyBody": "json",
+            "jsonBody": "{\n  \"videoId\": \"{{ $('Process Newsletter Content').item.json.videoId }}\",\n  \"videoTitle\": \"{{ $('Process Newsletter Content').item.json.videoTitle }}\",\n  \"transcript\": \"{{ $('Process Newsletter Content').item.json.transcript }}\",\n  \"previousErrors\": \"{{ $json.errorMessage }}\"\n}",
+            "options": {
+              "timeout": 60000
+            }
+          },
+          "id": "a3b4c5d6-e7f8-9012-abcd-345678901234",
+          "name": "Trigger LinkedIn Workflow",
+          "type": "n8n-nodes-base.httpRequest",
+          "typeVersion": 4.2,
+          "position": [1050, 300],
+          "continueOnFail": true
+        }
+      ],
+      "connections": {
+        "Webhook Trigger": {
+          "main": [
+            [
+              {
+                "node": "AI Newsletter Generator",
+                "type": "main",
+                "index": 0
+              }
+            ]
+          ]
+        },
+        "AI Newsletter Generator": {
+          "main": [
+            [
+              {
+                "node": "Process Newsletter Content",
+                "type": "main",
+                "index": 0
+              }
+            ]
+          ]
+        },
+        "Process Newsletter Content": {
+          "main": [
+            [
+              {
+                "node": "Create Newsletter Page",
+                "type": "main",
+                "index": 0
+              }
+            ]
+          ]
+        },
+        "Create Newsletter Page": {
+          "main": [
+            [
+              {
+                "node": "Trigger LinkedIn Workflow",
+                "type": "main",
+                "index": 0
+              }
+            ]
+          ]
+        }
+      },
+      "settings": {
+        "executionOrder": "v1",
+        "saveDataSuccessExecution": "all",
+        "saveDataErrorExecution": "all",
+        "saveExecutionProgress": true
+      }
+    },
+    {
+      "workflowInfo": {
+        "name": "3. Video Pipeline - LinkedIn Post Generator",
+        "description": "Webhook-triggered workflow that generates LinkedIn posts"
+      },
+      "name": "Video Pipeline - LinkedIn Post Generator",
+      "nodes": [
+        {
+          "parameters": {
+            "path": "linkedin-generator",
+            "httpMethod": "POST",
+            "responseMode": "lastNode",
+            "responseData": "allEntries"
+          },
+          "id": "b4c5d6e7-f8a9-0123-bcde-456789012345",
+          "name": "Webhook Trigger",
+          "type": "n8n-nodes-base.webhook",
+          "typeVersion": 1.1,
+          "position": [250, 300],
+          "webhookId": "linkedin-webhook"
+        },
+        {
+          "parameters": {
+            "projectId": "{{ $credentials.projectId }}",
+            "modelName": "gemini-1.5-flash-latest",
+            "temperature": 0.7,
+            "maxOutputTokens": 500,
+            "topP": 0.95,
+            "topK": 40,
+            "prompt": "You are a LinkedIn content strategist creating professional, engaging posts.\n\nBRAND VOICE: Professional yet approachable, thought-provoking, industry-focused.\n\nCONTENT FORMAT:\n- Hook opening line\n- 2-3 key insights from the video\n- Include relevant quote from transcript\n- Personal reflection or industry context\n- 3-5 relevant hashtags\n- Call for engagement (question/discussion)\n- Target length: 150-300 words\n\nOUTPUT INSTRUCTIONS: Return the post content with hashtags included at the end.\n\nCreate a LinkedIn post from this video:\n\nTitle: {{ $json.videoTitle }}\n\nTranscript:\n{{ $json.transcript }}"
+          },
+          "id": "c5d6e7f8-a9b0-1234-cdef-567890123456",
+          "name": "AI LinkedIn Post Generator",
+          "type": "@n8n/n8n-nodes-langchain.lmChatGoogleVertex",
+          "typeVersion": 1,
+          "position": [450, 300],
+          "credentials": {
+            "googleVertexAuth": {
+              "id": "google_vertex_credentials",
+              "name": "Google Vertex AI"
+            }
+          },
+          "continueOnFail": true
+        },
+        {
+          "parameters": {
+            "mode": "runOnceForAllItems",
+            "language": "javascript",
+            "jsCode": "// Get LinkedIn content and check for errors\nconst aiNode = $('AI LinkedIn Post Generator').item;\nlet linkedinContent = '';\nlet errorOccurred = false;\nlet errorMessage = $('Webhook Trigger').item.json.previousErrors || '';\n\nif (aiNode.error) {\n  errorOccurred = true;\n  errorMessage += `; LinkedIn generation failed: ${aiNode.error.message}`;\n  linkedinContent = 'Error generating LinkedIn content';\n} else {\n  linkedinContent = aiNode.json.text || aiNode.json.response || '';\n}\n\n// Calculate word count\nconst wordCount = linkedinContent.trim().split(/\\s+/).filter(word => word.length > 0).length;\n\n// Extract hashtags (look for words starting with #)\nconst hashtagMatches = linkedinContent.match(/#\\w+/g) || [];\nconst hashtags = hashtagMatches.join(' ');\n\n// Remove hashtags from main content for cleaner storage\nconst cleanContent = linkedinContent.replace(/#\\w+\\s*/g, '').trim();\n\n// Get webhook data\nconst webhookData = $('Webhook Trigger').item.json;\n\nreturn [\n  {\n    json: {\n      linkedinContent: cleanContent,\n      hashtags: hashtags || '#contentcreation #videocontent #insights',\n      wordCount,\n      videoTitle: webhookData.videoTitle,\n      videoId: webhookData.videoId,\n      transcript: webhookData.transcript,\n      targetAudience: 'Professional Network',\n      errorOccurred,\n      errorMessage\n    }\n  }\n];"
+          },
+          "id": "d6e7f8a9-b0c1-2345-defa-678901234567",
+          "name": "Process LinkedIn Post",
+          "type": "n8n-nodes-base.code",
+          "typeVersion": 2,
+          "position": [650, 300]
+        },
+        {
+          "parameters": {
+            "resource": "databasePage",
+            "operation": "create",
+            "databaseId": {
+              "mode": "id",
+              "value": "f30872f72ecf47f38bdd4ad17a1a813e"
+            },
+            "propertiesUi": {
+              "propertyValues": [
+                {
+                  "key": "Title",
+                  "title": "LinkedIn: {{ $json.videoTitle }}"
+                },
+                {
+                  "key": "Content Type",
+                  "selectValue": "LinkedIn Post"
+                },
+                {
+                  "key": "Status",
+                  "selectValue": "Draft"
+                },
+                {
+                  "key": "Word Count",
+                  "numberValue": "={{ $json.wordCount }}"
+                },
+                {
+                  "key": "Hashtags",
+                  "textValue": "={{ $json.hashtags }}"
+                },
+                {
+                  "key": "Target Audience",
+                  "selectValue": "={{ $json.targetAudience }}"
+                }
+              ]
+            },
+            "blockUi": {
+              "blockValues": [
+                {
+                  "type": "paragraph",
+                  "richText": true,
+                  "text": "={{ $json.linkedinContent }}"
+                },
+                {
+                  "type": "paragraph",
+                  "richText": true,
+                  "text": "\n\n{{ $json.hashtags }}"
+                }
+              ]
+            },
+            "options": {}
+          },
+          "id": "e7f8a9b0-c1d2-3456-efab-789012345678",
+          "name": "Create LinkedIn Page",
+          "type": "n8n-nodes-base.notion",
+          "typeVersion": 2.2,
+          "position": [850, 300],
+          "credentials": {
+            "notionApi": {
+              "id": "notion_credentials",
+              "name": "Notion account"
+            }
+          },
+          "continueOnFail": true
+        },
+        {
+          "parameters": {
+            "method": "POST",
+            "url": "http://localhost:5678/webhook/instagram-generator",
+            "authentication": "none",
+            "sendBody": true,
+            "specifyBody": "json",
+            "jsonBody": "{\n  \"videoId\": \"{{ $('Process LinkedIn Post').item.json.videoId }}\",\n  \"videoTitle\": \"{{ $('Process LinkedIn Post').item.json.videoTitle }}\",\n  \"transcript\": \"{{ $('Process LinkedIn Post').item.json.transcript }}\",\n  \"previousErrors\": \"{{ $json.errorMessage }}\"\n}",
+            "options": {
+              "timeout": 60000
+            }
+          },
+          "id": "f8a9b0c1-d2e3-4567-fabc-890123456789",
+          "name": "Trigger Instagram Workflow",
+          "type": "n8n-nodes-base.httpRequest",
+          "typeVersion": 4.2,
+          "position": [1050, 300],
+          "continueOnFail": true
+        }
+      ],
+      "connections": {
+        "Webhook Trigger": {
+          "main": [
+            [
+              {
+                "node": "AI LinkedIn Post Generator",
+                "type": "main",
+                "index": 0
+              }
+            ]
+          ]
+        },
+        "AI LinkedIn Post Generator": {
+          "main": [
+            [
+              {
+                "node": "Process LinkedIn Post",
+                "type": "main",
+                "index": 0
+              }
+            ]
+          ]
+        },
+        "Process LinkedIn Post": {
+          "main": [
+            [
+              {
+                "node": "Create LinkedIn Page",
+                "type": "main",
+                "index": 0
+              }
+            ]
+          ]
+        },
+        "Create LinkedIn Page": {
+          "main": [
+            [
+              {
+                "node": "Trigger Instagram Workflow",
+                "type": "main",
+                "index": 0
+              }
+            ]
+          ]
+        }
+      },
+      "settings": {
+        "executionOrder": "v1",
+        "saveDataSuccessExecution": "all",
+        "saveDataErrorExecution": "all",
+        "saveExecutionProgress": true
+      }
+    },
+    {
+      "workflowInfo": {
+        "name": "4. Video Pipeline - Instagram Caption Generator",
+        "description": "Final workflow that generates Instagram captions and updates the original video status"
+      },
+      "name": "Video Pipeline - Instagram Caption Generator",
+      "nodes": [
+        {
+          "parameters": {
+            "path": "instagram-generator",
+            "httpMethod": "POST",
+            "responseMode": "lastNode",
+            "responseData": "allEntries"
+          },
+          "id": "a9b0c1d2-e3f4-5678-abcd-901234567890",
+          "name": "Webhook Trigger",
+          "type": "n8n-nodes-base.webhook",
+          "typeVersion": 1.1,
+          "position": [250, 300],
+          "webhookId": "instagram-webhook"
+        },
+        {
+          "parameters": {
+            "projectId": "{{ $credentials.projectId }}",
+            "modelName": "gemini-1.5-flash-latest",
+            "temperature": 0.7,
+            "maxOutputTokens": 400,
+            "topP": 0.95,
+            "topK": 40,
+            "prompt": "You are an Instagram content creator crafting engaging, visual-friendly captions.\n\nBRAND VOICE: Engaging, inspirational, accessible. Focus on visual storytelling and community building.\n\nCONTENT FORMAT:\n- Attention-grabbing opening\n- 1-2 main points from video\n- Brief inspiring quote from transcript\n- 5-10 relevant hashtags (mix of popular and niche)\n- Call-to-action for engagement\n- Target length: 100-200 words\n\nOUTPUT INSTRUCTIONS: Return the caption with hashtags included at the end.\n\nCreate an Instagram caption from this video:\n\nTitle: {{ $json.videoTitle }}\n\nTranscript:\n{{ $json.transcript }}"
+          },
+          "id": "b0c1d2e3-f4a5-6789-bcde-012345678901",
+          "name": "AI Instagram Caption Generator",
+          "type": "@n8n/n8n-nodes-langchain.lmChatGoogleVertex",
+          "typeVersion": 1,
+          "position": [450, 300],
+          "credentials": {
+            "googleVertexAuth": {
+              "id": "google_vertex_credentials",
+              "name": "Google Vertex AI"
+            }
+          },
+          "continueOnFail": true
+        },
+        {
+          "parameters": {
+            "mode": "runOnceForAllItems",
+            "language": "javascript",
+            "jsCode": "// Get Instagram content and check for errors\nconst aiNode = $('AI Instagram Caption Generator').item;\nlet instagramContent = '';\nlet errorOccurred = false;\nlet errorMessage = $('Webhook Trigger').item.json.previousErrors || '';\nlet contentGenerated = 4; // Assume all 4 succeeded by default\n\nif (aiNode.error) {\n  errorOccurred = true;\n  errorMessage += `; Instagram generation failed: ${aiNode.error.message}`;\n  instagramContent = 'Error generating Instagram content';\n  contentGenerated = 3; // Only 3 content types succeeded\n} else {\n  instagramContent = aiNode.json.text || aiNode.json.response || '';\n}\n\n// Check if we had any previous errors\nif (errorMessage && errorMessage.includes('failed')) {\n  const failureCount = (errorMessage.match(/failed/g) || []).length;\n  contentGenerated = Math.max(1, 4 - failureCount);\n}\n\n// Calculate word count\nconst wordCount = instagramContent.trim().split(/\\s+/).filter(word => word.length > 0).length;\n\n// Extract hashtags\nconst hashtagMatches = instagramContent.match(/#\\w+/g) || [];\nconst hashtags = hashtagMatches.join(' ');\n\n// Remove hashtags from main content\nconst cleanContent = instagramContent.replace(/#\\w+\\s*/g, '').trim();\n\n// Get webhook data\nconst webhookData = $('Webhook Trigger').item.json;\n\nreturn [\n  {\n    json: {\n      instagramContent: cleanContent,\n      hashtags: hashtags || '#content #video #inspiration #community #creative',\n      wordCount,\n      videoTitle: webhookData.videoTitle,\n      videoId: webhookData.videoId,\n      targetAudience: 'Social Media Followers',\n      contentGenerated,\n      errorOccurred,\n      errorMessage: errorMessage || '',\n      finalStatus: errorOccurred ? 'Partially Completed' : 'Completed'\n    }\n  }\n];"
+          },
+          "id": "c1d2e3f4-a5b6-7890-cdef-123456789012",
+          "name": "Process Instagram Caption",
+          "type": "n8n-nodes-base.code",
+          "typeVersion": 2,
+          "position": [650, 300]
+        },
+        {
+          "parameters": {
+            "resource": "databasePage",
+            "operation": "create",
+            "databaseId": {
+              "mode": "id",
+              "value": "f30872f72ecf47f38bdd4ad17a1a813e"
+            },
+            "propertiesUi": {
+              "propertyValues": [
+                {
+                  "key": "Title",
+                  "title": "Instagram: {{ $json.videoTitle }}"
+                },
+                {
+                  "key": "Content Type",
+                  "selectValue": "Instagram Caption"
+                },
+                {
+                  "key": "Status",
+                  "selectValue": "Draft"
+                },
+                {
+                  "key": "Word Count",
+                  "numberValue": "={{ $json.wordCount }}"
+                },
+                {
+                  "key": "Hashtags",
+                  "textValue": "={{ $json.hashtags }}"
+                },
+                {
+                  "key": "Target Audience",
+                  "selectValue": "={{ $json.targetAudience }}"
+                }
+              ]
+            },
+            "blockUi": {
+              "blockValues": [
+                {
+                  "type": "paragraph",
+                  "richText": true,
+                  "text": "={{ $json.instagramContent }}"
+                },
+                {
+                  "type": "paragraph",
+                  "richText": true,
+                  "text": "\n\n{{ $json.hashtags }}"
+                }
+              ]
+            },
+            "options": {}
+          },
+          "id": "d2e3f4a5-b6c7-8901-defa-234567890123",
+          "name": "Create Instagram Page",
+          "type": "n8n-nodes-base.notion",
+          "typeVersion": 2.2,
+          "position": [850, 300],
+          "credentials": {
+            "notionApi": {
+              "id": "notion_credentials",
+              "name": "Notion account"
+            }
+          },
+          "continueOnFail": true
+        },
+        {
+          "parameters": {
+            "resource": "databasePage",
+            "operation": "update",
+            "pageId": "={{ $('Process Instagram Caption').item.json.videoId }}",
+            "propertiesUi": {
+              "propertyValues": [
+                {
+                  "key": "Status",
+                  "selectValue": "={{ $('Process Instagram Caption').item.json.finalStatus }}"
+                },
+                {
+                  "key": "Content Generated",
+                  "numberValue": "={{ $('Process Instagram Caption').item.json.contentGenerated }}"
+                },
+                {
+                  "key": "Error Log",
+                  "textValue": "={{ $('Process Instagram Caption').item.json.errorMessage }}"
+                }
+              ]
+            },
+            "options": {}
+          },
+          "id": "e3f4a5b6-c7d8-9012-efab-345678901234",
+          "name": "Update Original Video Status",
+          "type": "n8n-nodes-base.notion",
+          "typeVersion": 2.2,
+          "position": [1050, 300],
+          "credentials": {
+            "notionApi": {
+              "id": "notion_credentials",
+              "name": "Notion account"
+            }
+          },
+          "continueOnFail": true
+        },
+        {
+          "parameters": {
+            "conditions": {
+              "boolean": [
+                {
+                  "value1": "={{ $('Update Original Video Status').item.error === undefined }}",
+                  "operation": "true"
+                }
+              ]
+            }
+          },
+          "id": "f4a5b6c7-d8e9-0123-fabc-456789012345",
+          "name": "Check Update Success",
+          "type": "n8n-nodes-base.if",
+          "typeVersion": 2,
+          "position": [1250, 300]
+        },
+        {
+          "parameters": {
+            "mode": "runOnceForAllItems",
+            "language": "javascript",
+            "jsCode": "// Final success message\nconst processData = $('Process Instagram Caption').item.json;\n\nreturn [\n  {\n    json: {\n      success: true,\n      message: `Content pipeline completed successfully for video: ${processData.videoTitle}`,\n      contentGenerated: processData.contentGenerated,\n      videoId: processData.videoId,\n      status: processData.finalStatus\n    }\n  }\n];"
+          },
+          "id": "a5b6c7d8-e9f0-1234-abcd-567890123456",
+          "name": "Success Handler",
+          "type": "n8n-nodes-base.code",
+          "typeVersion": 2,
+          "position": [1450, 250]
+        },
+        {
+          "parameters": {
+            "mode": "runOnceForAllItems",
+            "language": "javascript",
+            "jsCode": "// Error handler - log the failure\nconst processData = $('Process Instagram Caption').item.json;\nconst updateError = $('Update Original Video Status').item.error;\n\nreturn [\n  {\n    json: {\n      success: false,\n      message: `Failed to update video status: ${updateError?.message || 'Unknown error'}`,\n      contentGenerated: processData.contentGenerated,\n      videoId: processData.videoId,\n      status: 'Error',\n      errorDetails: processData.errorMessage + `; Final update failed: ${updateError?.message}`\n    }\n  }\n];"
+          },
+          "id": "b6c7d8e9-f0a1-2345-bcde-678901234567",
+          "name": "Error Handler",
+          "type": "n8n-nodes-base.code",
+          "typeVersion": 2,
+          "position": [1450, 350]
+        }
+      ],
+      "connections": {
+        "Webhook Trigger": {
+          "main": [
+            [
+              {
+                "node": "AI Instagram Caption Generator",
+                "type": "main",
+                "index": 0
+              }
+            ]
+          ]
+        },
+        "AI Instagram Caption Generator": {
+          "main": [
+            [
+              {
+                "node": "Process Instagram Caption",
+                "type": "main",
+                "index": 0
+              }
+            ]
+          ]
+        },
+        "Process Instagram Caption": {
+          "main": [
+            [
+              {
+                "node": "Create Instagram Page",
+                "type": "main",
+                "index": 0
+              }
+            ]
+          ]
+        },
+        "Create Instagram Page": {
+          "main": [
+            [
+              {
+                "node": "Update Original Video Status",
+                "type": "main",
+                "index": 0
+              }
+            ]
+          ]
+        },
+        "Update Original Video Status": {
+          "main": [
+            [
+              {
+                "node": "Check Update Success",
+                "type": "main",
+                "index": 0
+              }
+            ]
+          ]
+        },
+        "Check Update Success": {
+          "main": [
+            [
+              {
+                "node": "Success Handler",
+                "type": "main",
+                "index": 0
+              }
+            ],
+            [
+              {
+                "node": "Error Handler",
+                "type": "main",
+                "index": 0
+              }
+            ]
+          ]
+        }
+      },
+      "settings": {
+        "executionOrder": "v1",
+        "saveDataSuccessExecution": "all",
+        "saveDataErrorExecution": "all",
+        "saveExecutionProgress": true
+      }
+    }
+  ]
+}

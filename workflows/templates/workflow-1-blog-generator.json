@@ -1,0 +1,312 @@
+{
+  "name": "Video Pipeline - Blog Post Generator",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 5
+            }
+          ]
+        }
+      },
+      "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "operation": "getAll",
+        "databaseId": "bdd14a97edf74955a841be2ab498c8da",
+        "returnAll": false,
+        "limit": 1,
+        "filterType": "manual",
+        "filters": {
+          "conditions": [
+            {
+              "key": "Status",
+              "condition": "equals",
+              "value": "Ready to Process"
+            }
+          ]
+        }
+      },
+      "id": "b2c3d4e5-f6a7-8901-bcde-f23456789012",
+      "name": "Find Videos to Process",
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2,
+      "position": [450, 300],
+      "credentials": {
+        "notionApi": {
+          "id": "{{credentialId}}",
+          "name": "Notion account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "operation": "update",
+        "pageId": "={{ $json.id }}",
+        "propertiesUi": {
+          "propertyValues": [
+            {
+              "key": "Status",
+              "selectValue": "Processing"
+            }
+          ]
+        }
+      },
+      "id": "c3d4e5f6-a7b8-9012-cdef-345678901234",
+      "name": "Update Status to Processing",
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2,
+      "position": [650, 300],
+      "credentials": {
+        "notionApi": {
+          "id": "{{credentialId}}",
+          "name": "Notion account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "page",
+        "operation": "get",
+        "pageId": "={{ $('Find Videos to Process').item.json.id }}",
+        "simple": false
+      },
+      "id": "d4e5f6a7-b8c9-0123-defa-456789012345",
+      "name": "Extract Transcript",
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2,
+      "position": [850, 300],
+      "credentials": {
+        "notionApi": {
+          "id": "{{credentialId}}",
+          "name": "Notion account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "model": "gpt-3.5-turbo",
+        "messages": {
+          "values": [
+            {
+              "role": "system",
+              "content": "You are a professional blog writer creating SEO-optimized content.\n\nBRAND VOICE: Professional, educational, actionable. Focus on practical insights and real-world applications.\n\nCONTENT FORMAT:\n- Compelling SEO title (60-70 characters)\n- Engaging introduction with hook (150-200 words)\n- 3-4 main sections with H2 subheadings\n- Include relevant quotes from the transcript\n- Practical examples and actionable takeaways\n- Strong conclusion with clear call-to-action\n- Target length: 1200-1500 words\n\nOUTPUT INSTRUCTIONS: Return ONLY the complete blog post content. No additional explanations or formatting notes."
+            },
+            {
+              "role": "user", 
+              "content": "Create a blog post from this transcript:\n\n{{ $('Extract Transcript').item.json.text || $('Extract Transcript').item.json }}"
+            }
+          ]
+        },
+        "options": {
+          "temperature": 0.7,
+          "maxTokens": 2000
+        }
+      },
+      "id": "e5f6a7b8-c9d0-1234-efab-567890123456",
+      "name": "AI Blog Post Generator",
+      "type": "n8n-nodes-base.openAi",
+      "typeVersion": 1,
+      "position": [1050, 300],
+      "credentials": {
+        "openAiApi": {
+          "id": "{{credentialId}}",
+          "name": "OpenAI account"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Get the blog post content and check for errors\nconst aiNode = $('AI Blog Post Generator').item;\nlet blogContent = '';\nlet errorOccurred = false;\nlet errorMessage = '';\n\nif (aiNode.error) {\n  errorOccurred = true;\n  errorMessage = `Blog generation failed: ${aiNode.error.message}`;\n  blogContent = 'Error generating blog content';\n} else {\n  blogContent = aiNode.json.message?.content || aiNode.json.text || aiNode.json.choices?.[0]?.message?.content || '';\n}\n\n// Calculate word count\nconst wordCount = blogContent.trim().split(/\\s+/).filter(word => word.length > 0).length;\n\n// Extract title from the content (assuming it's the first line)\nconst lines = blogContent.split('\\n').filter(line => line.trim());\nconst title = lines[0] || 'Blog Post';\n\n// Get original video data\nconst videoData = $('Find Videos to Process').item.json;\nconst videoTitle = videoData.properties?.Title?.title?.[0]?.text?.content || videoData.properties?.Name?.title?.[0]?.text?.content || 'Untitled Video';\n\n// Extract SEO keywords from content\nconst words = blogContent.toLowerCase().match(/\\b[a-z]{4,}\\b/g) || [];\nconst stopWords = ['that', 'this', 'with', 'from', 'have', 'will', 'your', 'what', 'when', 'where', 'which', 'their', 'there', 'these', 'those', 'been', 'being', 'about', 'after', 'before', 'could', 'should', 'would'];\nconst wordFreq = {};\n\nwords.forEach(word => {\n  if (!stopWords.includes(word)) {\n    wordFreq[word] = (wordFreq[word] || 0) + 1;\n  }\n});\n\nconst seoKeywords = Object.entries(wordFreq)\n  .sort((a, b) => b[1] - a[1])\n  .slice(0, 5)\n  .map(([word]) => word)\n  .join(', ');\n\nconst transcriptData = $('Extract Transcript').item.json;\nconst transcript = transcriptData.text || JSON.stringify(transcriptData);\n\nreturn [\n  {\n    json: {\n      blogContent,\n      wordCount,\n      title,\n      videoTitle,\n      videoId: videoData.id,\n      seoKeywords: seoKeywords || 'content, video, insights',\n      targetAudience: 'General',\n      errorOccurred,\n      errorMessage,\n      transcript\n    }\n  }\n];"
+      },
+      "id": "f6a7b8c9-d0e1-2345-fabc-678901234567",
+      "name": "Calculate Word Count",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1250, 300]
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "operation": "create",
+        "databaseId": "f30872f72ecf47f38bdd4ad17a1a813e",
+        "title": "Blog: {{ $json.videoTitle }}",
+        "propertiesUi": {
+          "propertyValues": [
+            {
+              "key": "Content Type",
+              "selectValue": "Blog Post"
+            },
+            {
+              "key": "Status",
+              "selectValue": "Draft"
+            },
+            {
+              "key": "Word Count",
+              "numberValue": "={{ $json.wordCount }}"
+            },
+            {
+              "key": "Target Audience",
+              "textValue": "={{ $json.targetAudience }}"
+            },
+            {
+              "key": "SEO Keywords",
+              "textValue": "={{ $json.seoKeywords }}"
+            }
+          ]
+        },
+        "blockUi": {
+          "blockValues": [
+            {
+              "richText": "={{ $json.blogContent }}"
+            }
+          ]
+        }
+      },
+      "id": "a7b8c9d0-e1f2-3456-abcd-789012345678",
+      "name": "Create Blog Page in Content Hub",
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2,
+      "position": [1450, 300],
+      "credentials": {
+        "notionApi": {
+          "id": "{{credentialId}}",
+          "name": "Notion account"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://localhost:5678/webhook/newsletter-generator",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "videoId",
+              "value": "={{ $('Find Videos to Process').item.json.id }}"
+            },
+            {
+              "name": "videoTitle",
+              "value": "={{ $('Calculate Word Count').item.json.videoTitle }}"
+            },
+            {
+              "name": "transcript",
+              "value": "={{ $('Calculate Word Count').item.json.transcript }}"
+            },
+            {
+              "name": "previousErrors",
+              "value": "={{ $json.errorMessage }}"
+            }
+          ]
+        }
+      },
+      "id": "b8c9d0e1-f2a3-4567-bcde-890123456789",
+      "name": "Trigger Newsletter Workflow",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [1650, 300],
+      "continueOnFail": true
+    }
+  ],
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Find Videos to Process",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find Videos to Process": {
+      "main": [
+        [
+          {
+            "node": "Update Status to Processing",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Status to Processing": {
+      "main": [
+        [
+          {
+            "node": "Extract Transcript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Transcript": {
+      "main": [
+        [
+          {
+            "node": "AI Blog Post Generator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Blog Post Generator": {
+      "main": [
+        [
+          {
+            "node": "Calculate Word Count",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Calculate Word Count": {
+      "main": [
+        [
+          {
+            "node": "Create Blog Page in Content Hub",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Blog Page in Content Hub": {
+      "main": [
+        [
+          {
+            "node": "Trigger Newsletter Workflow",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 0,
+  "updatedAt": "2024-01-01T00:00:00.000Z",
+  "versionId": "01"
+}

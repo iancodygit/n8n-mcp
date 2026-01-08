@@ -1,0 +1,277 @@
+{
+  "name": "Video Pipeline - Instagram Caption Generator",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "instagram-generator",
+        "httpMethod": "POST",
+        "responseMode": "lastNode",
+        "responseData": "allEntries"
+      },
+      "id": "a9b0c1d2-e3f4-5678-abcd-901234567890",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [250, 300],
+      "webhookId": "instagram-webhook"
+    },
+    {
+      "parameters": {
+        "projectId": "{{ $credentials.projectId }}",
+        "modelName": "gemini-1.5-flash-latest",
+        "temperature": 0.7,
+        "maxOutputTokens": 400,
+        "topP": 0.95,
+        "topK": 40,
+        "prompt": "You are an Instagram content creator crafting engaging, visual-friendly captions.\n\nBRAND VOICE: Engaging, inspirational, accessible. Focus on visual storytelling and community building.\n\nCONTENT FORMAT:\n- Attention-grabbing opening\n- 1-2 main points from video\n- Brief inspiring quote from transcript\n- 5-10 relevant hashtags (mix of popular and niche)\n- Call-to-action for engagement\n- Target length: 100-200 words\n\nOUTPUT INSTRUCTIONS: Return the caption with hashtags included at the end.\n\nCreate an Instagram caption from this video:\n\nTitle: {{ $json.videoTitle }}\n\nTranscript:\n{{ $json.transcript }}"
+      },
+      "id": "b0c1d2e3-f4a5-6789-bcde-012345678901",
+      "name": "AI Instagram Caption Generator",
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleVertex",
+      "typeVersion": 1,
+      "position": [450, 300],
+      "credentials": {
+        "googleVertexAuth": {
+          "id": "google_vertex_credentials",
+          "name": "Google Vertex AI"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javascript",
+        "jsCode": "// Get Instagram content and check for errors\nconst aiNode = $('AI Instagram Caption Generator').item;\nlet instagramContent = '';\nlet errorOccurred = false;\nlet errorMessage = $('Webhook Trigger').item.json.previousErrors || '';\nlet contentGenerated = 4; // Assume all 4 succeeded by default\n\nif (aiNode.error) {\n  errorOccurred = true;\n  errorMessage += `; Instagram generation failed: ${aiNode.error.message}`;\n  instagramContent = 'Error generating Instagram content';\n  contentGenerated = 3; // Only 3 content types succeeded\n} else {\n  instagramContent = aiNode.json.text || aiNode.json.response || '';\n}\n\n// Check if we had any previous errors\nif (errorMessage && errorMessage.includes('failed')) {\n  const failureCount = (errorMessage.match(/failed/g) || []).length;\n  contentGenerated = Math.max(1, 4 - failureCount);\n}\n\n// Calculate word count\nconst wordCount = instagramContent.trim().split(/\\s+/).filter(word => word.length > 0).length;\n\n// Extract hashtags\nconst hashtagMatches = instagramContent.match(/#\\w+/g) || [];\nconst hashtags = hashtagMatches.join(' ');\n\n// Remove hashtags from main content\nconst cleanContent = instagramContent.replace(/#\\w+\\s*/g, '').trim();\n\n// Get webhook data\nconst webhookData = $('Webhook Trigger').item.json;\n\nreturn [\n  {\n    json: {\n      instagramContent: cleanContent,\n      hashtags: hashtags || '#content #video #inspiration #community #creative',\n      wordCount,\n      videoTitle: webhookData.videoTitle,\n      videoId: webhookData.videoId,\n      targetAudience: 'Social Media Followers',\n      contentGenerated,\n      errorOccurred,\n      errorMessage: errorMessage || '',\n      finalStatus: errorOccurred ? 'Partially Completed' : 'Completed'\n    }\n  }\n];"
+      },
+      "id": "c1d2e3f4-a5b6-7890-cdef-123456789012",
+      "name": "Process Instagram Caption",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [650, 300]
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "operation": "create",
+        "databaseId": {
+          "mode": "id",
+          "value": "f30872f72ecf47f38bdd4ad17a1a813e"
+        },
+        "propertiesUi": {
+          "propertyValues": [
+            {
+              "key": "Title",
+              "title": "Instagram: {{ $json.videoTitle }}"
+            },
+            {
+              "key": "Content Type",
+              "selectValue": "Instagram Caption"
+            },
+            {
+              "key": "Status",
+              "selectValue": "Draft"
+            },
+            {
+              "key": "Word Count",
+              "numberValue": "={{ $json.wordCount }}"
+            },
+            {
+              "key": "Hashtags",
+              "textValue": "={{ $json.hashtags }}"
+            },
+            {
+              "key": "Target Audience",
+              "selectValue": "={{ $json.targetAudience }}"
+            }
+          ]
+        },
+        "blockUi": {
+          "blockValues": [
+            {
+              "type": "paragraph",
+              "richText": true,
+              "text": "={{ $json.instagramContent }}"
+            },
+            {
+              "type": "paragraph",
+              "richText": true,
+              "text": "\n\n{{ $json.hashtags }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "d2e3f4a5-b6c7-8901-defa-234567890123",
+      "name": "Create Instagram Page",
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [850, 300],
+      "credentials": {
+        "notionApi": {
+          "id": "notion_credentials",
+          "name": "Notion account"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "operation": "update",
+        "pageId": "={{ $('Process Instagram Caption').item.json.videoId }}",
+        "propertiesUi": {
+          "propertyValues": [
+            {
+              "key": "Status",
+              "selectValue": "={{ $('Process Instagram Caption').item.json.finalStatus }}"
+            },
+            {
+              "key": "Content Generated",
+              "numberValue": "={{ $('Process Instagram Caption').item.json.contentGenerated }}"
+            },
+            {
+              "key": "Error Log",
+              "textValue": "={{ $('Process Instagram Caption').item.json.errorMessage }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "e3f4a5b6-c7d8-9012-efab-345678901234",
+      "name": "Update Original Video Status",
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [1050, 300],
+      "credentials": {
+        "notionApi": {
+          "id": "notion_credentials",
+          "name": "Notion account"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $('Update Original Video Status').item.error === undefined }}",
+              "operation": "true"
+            }
+          ]
+        }
+      },
+      "id": "f4a5b6c7-d8e9-0123-fabc-456789012345",
+      "name": "Check Update Success",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1250, 300]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javascript",
+        "jsCode": "// Final success message\nconst processData = $('Process Instagram Caption').item.json;\n\nreturn [\n  {\n    json: {\n      success: true,\n      message: `Content pipeline completed successfully for video: ${processData.videoTitle}`,\n      contentGenerated: processData.contentGenerated,\n      videoId: processData.videoId,\n      status: processData.finalStatus\n    }\n  }\n];"
+      },
+      "id": "a5b6c7d8-e9f0-1234-abcd-567890123456",
+      "name": "Success Handler",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1450, 250]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javascript",
+        "jsCode": "// Error handler - log the failure\nconst processData = $('Process Instagram Caption').item.json;\nconst updateError = $('Update Original Video Status').item.error;\n\nreturn [\n  {\n    json: {\n      success: false,\n      message: `Failed to update video status: ${updateError?.message || 'Unknown error'}`,\n      contentGenerated: processData.contentGenerated,\n      videoId: processData.videoId,\n      status: 'Error',\n      errorDetails: processData.errorMessage + `; Final update failed: ${updateError?.message}`\n    }\n  }\n];"
+      },
+      "id": "b6c7d8e9-f0a1-2345-bcde-678901234567",
+      "name": "Error Handler",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1450, 350]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "AI Instagram Caption Generator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Instagram Caption Generator": {
+      "main": [
+        [
+          {
+            "node": "Process Instagram Caption",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Instagram Caption": {
+      "main": [
+        [
+          {
+            "node": "Create Instagram Page",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Instagram Page": {
+      "main": [
+        [
+          {
+            "node": "Update Original Video Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Original Video Status": {
+      "main": [
+        [
+          {
+            "node": "Check Update Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Update Success": {
+      "main": [
+        [
+          {
+            "node": "Success Handler",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Error Handler",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataSuccessExecution": "all",
+    "saveDataErrorExecution": "all",
+    "saveExecutionProgress": true
+  }
+}

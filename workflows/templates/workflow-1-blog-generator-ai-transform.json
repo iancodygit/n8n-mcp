@@ -1,0 +1,416 @@
+{
+  "name": "Transcript Pipeline - Blog Post Generator (Gemini AI)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 5
+            }
+          ]
+        }
+      },
+      "id": "schedule_trigger",
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "operation": "getAll",
+        "databaseId": {
+          "mode": "id",
+          "value": "bdd14a97edf74955a841be2ab498c8da"
+        },
+        "returnAll": false,
+        "limit": 1,
+        "filterType": "manual",
+        "filters": {
+          "conditions": [
+            {
+              "key": "Status",
+              "condition": "equals",
+              "value": "Ready to Process"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "find_transcripts",
+      "name": "Find Transcripts to Process",
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [450, 300],
+      "credentials": {
+        "notionApi": {
+          "id": "notion_credentials",
+          "name": "Notion account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check_transcript",
+              "leftValue": "={{ $json.properties?.Transcript?.rich_text?.length > 0 || $json.properties?.Content?.rich_text?.length > 0 }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check_if_transcripts_found",
+      "name": "Check if Transcripts Found",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [650, 300]
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "operation": "update",
+        "pageId": "={{ $json.id }}",
+        "propertiesUi": {
+          "propertyValues": [
+            {
+              "key": "Status",
+              "selectValue": "Processing"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "update_status",
+      "name": "Update Status to Processing",
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [850, 300],
+      "credentials": {
+        "notionApi": {
+          "id": "notion_credentials",
+          "name": "Notion account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "block",
+        "operation": "getAll",
+        "blockId": {
+          "mode": "id",
+          "value": "={{ $('Find Transcripts to Process').item.json.id }}"
+        },
+        "returnAll": true,
+        "options": {}
+      },
+      "id": "get_page_content",
+      "name": "Get Page Content",
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [1050, 300],
+      "credentials": {
+        "notionApi": {
+          "id": "notion_credentials",
+          "name": "Notion account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "instructions": "Extract all text content from the Notion blocks. Combine text from all block types (paragraph, heading_1, heading_2, heading_3, quote, bulleted_list_item, numbered_list_item, etc.) into a single continuous transcript. For each block, extract the plain_text from rich_text arrays. Return the combined text as 'transcript' field.",
+        "responseFormat": "json"
+      },
+      "id": "extract_text_from_blocks",
+      "name": "Extract Text from Blocks",
+      "type": "n8n-nodes-base.aiTransform",
+      "typeVersion": 1,
+      "position": [1250, 300]
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "mode": "id",
+          "value": "gpt-4o-mini"
+        },
+        "name": "AI Model",
+        "options": {}
+      },
+      "id": "ai_model",
+      "name": "Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1,
+      "position": [1250, 450],
+      "credentials": {
+        "openAiApi": {
+          "id": "openai_credentials",
+          "name": "OpenAI account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.transcript }}"
+      },
+      "id": "ai_blog_generator",
+      "name": "AI Blog Post Generator",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.4,
+      "position": [1450, 300]
+    },
+    {
+      "parameters": {
+        "projectId": "{{ $credentials.projectId }}",
+        "modelName": "gemini-1.5-flash",
+        "options": {
+          "temperature": 0.7,
+          "maxOutputTokens": 2000,
+          "topP": 0.95,
+          "topK": 40
+        }
+      },
+      "id": "google_gemini_model",
+      "name": "Google Gemini Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleVertex",
+      "typeVersion": 1,
+      "position": [1450, 450],
+      "credentials": {
+        "googleVertexAuth": {
+          "id": "google_vertex_credentials",
+          "name": "Google Vertex AI"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "messages": {
+          "messageValues": [
+            {
+              "type": "SystemMessagePromptTemplate",
+              "message": "You are a professional blog writer creating SEO-optimized content from video transcripts.\n\nBRAND VOICE: Professional, educational, actionable. Focus on practical insights and real-world applications.\n\nCONTENT FORMAT:\n- Compelling SEO title (60-70 characters)\n- Engaging introduction with hook (150-200 words)\n- 3-4 main sections with H2 subheadings\n- Include relevant quotes from the transcript when available\n- Practical examples and actionable takeaways\n- Strong conclusion with clear call-to-action\n- Target length: 1200-1500 words\n\nOUTPUT INSTRUCTIONS: Return ONLY the complete blog post content in markdown format. No additional explanations or formatting notes."
+            },
+            {
+              "type": "HumanMessagePromptTemplate",
+              "message": "Create a comprehensive blog post from this transcript:\n\nTitle: {{ $('Find Transcripts to Process').item.json.properties?.Title?.title?.[0]?.text?.content || 'Untitled' }}\n\nTranscript:\n{{ text }}"
+            }
+          ]
+        }
+      },
+      "id": "blog_prompt_template",
+      "name": "Process Blog Content",
+      "type": "@n8n/n8n-nodes-langchain.chatMessagePromptTemplate",
+      "typeVersion": 1.1,
+      "position": [1450, 600]
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "operation": "create",
+        "databaseId": {
+          "mode": "id",
+          "value": "f30872f72ecf47f38bdd4ad17a1a813e"
+        },
+        "propertiesUi": {
+          "propertyValues": [
+            {
+              "key": "Title",
+              "title": "Blog: {{ $('Find Transcripts to Process').item.json.properties?.Title?.title?.[0]?.text?.content || 'Untitled' }}"
+            },
+            {
+              "key": "Content Type",
+              "selectValue": "Blog Post"
+            },
+            {
+              "key": "Status",
+              "selectValue": "Draft"
+            },
+            {
+              "key": "Source",
+              "textValue": "{{ $('Find Transcripts to Process').item.json.id }}"
+            }
+          ]
+        },
+        "blockUi": {
+          "blockValues": [
+            {
+              "type": "paragraph",
+              "richText": true,
+              "text": "={{ $json.response || $json.text || $json.output || 'No content generated' }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "create_blog_hub",
+      "name": "Create Blog in Content Hub",
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [1650, 300],
+      "credentials": {
+        "notionApi": {
+          "id": "notion_credentials",
+          "name": "Notion account"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "event": "workflowSuccess"
+      },
+      "id": "trigger_newsletter",
+      "name": "Trigger Newsletter Workflow",
+      "type": "n8n-nodes-base.n8nTrigger",
+      "typeVersion": 1,
+      "position": [1850, 300],
+      "webhookId": "newsletter_trigger"
+    }
+  ],
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Find Transcripts to Process",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find Transcripts to Process": {
+      "main": [
+        [
+          {
+            "node": "Check if Transcripts Found",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check if Transcripts Found": {
+      "main": [
+        [
+          {
+            "node": "Update Status to Processing",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Update Status to Processing": {
+      "main": [
+        [
+          {
+            "node": "Get Page Content",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Page Content": {
+      "main": [
+        [
+          {
+            "node": "Extract Text from Blocks",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Text from Blocks": {
+      "main": [
+        [
+          {
+            "node": "AI Blog Post Generator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Extract Text from Blocks",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Blog Post Generator": {
+      "main": [
+        [
+          {
+            "node": "Create Blog in Content Hub",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Gemini Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Blog Post Generator",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Blog Content": {
+      "ai_prompt": [
+        [
+          {
+            "node": "AI Blog Post Generator",
+            "type": "ai_prompt",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Blog in Content Hub": {
+      "main": [
+        [
+          {
+            "node": "Trigger Newsletter Workflow",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataSuccessExecution": "all",
+    "saveDataErrorExecution": "all",
+    "saveExecutionProgress": true,
+    "saveManualExecutions": true
+  }
+}
